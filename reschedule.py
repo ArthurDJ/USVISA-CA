@@ -12,6 +12,7 @@ reschedule.py — Main driver for automated US visa appointment rescheduling.
 """
 
 import logging
+import logging.handlers
 import os
 import re
 import traceback
@@ -38,7 +39,7 @@ from settings import *
 # Output to both console and a date-stamped log file
 # ---------------------------------------------------------------------------
 os.makedirs("log", exist_ok=True)
-_log_filename = f"log/reschedule_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+_log_filename = "log/reschedule.log"
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -46,7 +47,9 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler(_log_filename, encoding="utf-8"),
+        logging.handlers.TimedRotatingFileHandler(
+            _log_filename, when="D", interval=1, backupCount=30, encoding="utf-8"
+        ),
     ],
 )
 logger = logging.getLogger(__name__)
