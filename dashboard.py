@@ -1,7 +1,9 @@
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import os
 
-LOG_FILE = "/Users/jiedeng/.openclaw/workspace-cos/USVISA-CA/reschedule_persistent.log"
+# 日志文件路径：优先使用环境变量，否则默认当前目录下的 log/reschedule.log
+# Log file path: env var takes priority, falls back to log/reschedule.log in current dir
+LOG_FILE = os.getenv("LOG_FILE", os.path.join(os.path.dirname(__file__), "log", "reschedule.log"))
 
 class LogHandler(BaseHTTPRequestHandler):
     def do_GET(self):
