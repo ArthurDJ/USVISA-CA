@@ -80,11 +80,21 @@ RECEIVER_NAME         = os.getenv("RECEIVER_NAME")          # 收件人名称 / 
 RECEIVER_EMAIL        = os.getenv("RECEIVER_EMAIL")         # 收件人邮箱 / Recipient email
 
 # ===========================================================================
+# 运行模式 / Run mode
+# local  — 本地 macOS/Windows，可显示浏览器窗口，自动下载 ChromeDriver
+#           Local macOS/Windows, GUI optional, ChromeDriver auto-downloaded
+# server — Linux 服务器 / Docker，强制无头，使用系统 ChromeDriver，仅 stdout 日志
+#           Linux server / Docker, always headless, uses system ChromeDriver, stdout-only logging
+# ===========================================================================
+RUN_MODE = os.getenv("RUN_MODE", "local").lower()  # "local" | "server"
+
+# ===========================================================================
 # 界面与测试开关 / UI and test switches
 # ===========================================================================
 # 是否显示浏览器窗口（true=显示，false=无头模式）
 # Whether to show the browser window (true=visible, false=headless)
-SHOW_GUI  = os.getenv("SHOW_GUI",  "false").lower() == "true"
+# 注：server 模式下强制为 False / In server mode, always forced to False
+SHOW_GUI  = (os.getenv("SHOW_GUI", "false").lower() == "true") and (RUN_MODE == "local")
 
 # 测试模式：程序正常运行但不点击最终确认按钮
 # Test mode: program runs normally but does NOT click the final confirm button

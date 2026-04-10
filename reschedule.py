@@ -36,24 +36,30 @@ from hub_notifier import notify as hub_notify
 
 # ---------------------------------------------------------------------------
 # 日志配置 / Logging setup
-# 同时输出到控制台和文件，文件按日期命名
-# Output to both console and a date-stamped log file
+# local  模式: console + 文件滚动 / local mode: console + rotating file
+# server 模式: 仅 stdout（适合 Docker / Railway 日志采集）
+#              server mode: stdout only (Docker / Railway log collection)
 # ---------------------------------------------------------------------------
-os.makedirs("log", exist_ok=True)
-_log_filename = "log/reschedule.log"
+_log_format  = "[%(asctime)s] %(levelname)-8s %(message)s"
+_log_datefmt = "%Y-%m-%d %H:%M:%S"
+_handlers: list[logging.Handler] = [logging.StreamHandler()]
+
+if RUN_MODE == "local":
+    os.makedirs("log", exist_ok=True)
+    _handlers.append(
+        logging.handlers.TimedRotatingFileHandler(
+            "log/reschedule.log", when="D", interval=1, backupCount=30, encoding="utf-8"
+        )
+    )
 
 logging.basicConfig(
     level=logging.DEBUG,
-    format="[%(asctime)s] %(levelname)-8s %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-    handlers=[
-        logging.StreamHandler(),
-        logging.handlers.TimedRotatingFileHandler(
-            _log_filename, when="D", interval=1, backupCount=30, encoding="utf-8"
-        ),
-    ],
+    format=_log_format,
+    datefmt=_log_datefmt,
+    handlers=_handlers,
 )
 logger = logging.getLogger(__name__)
+logger.info(f"运行模式 / Run mode: {RUN_MODE.upper()}")
 
 
 def log_message(message: str) -> None:
@@ -67,26 +73,86 @@ def log_message(message: str) -> None:
 
 def get_chrome_driver() -> WebDriver:
     """创建并返回配置好的 Chrome WebDriver 实例。
-    Create and return a configured Chrome WebDriver instance."""
-    logger.debug("初始化 Chrome WebDriver / Initialising Chrome WebDriver")
+    Create and return a configured Chrome WebDriver instance.
+
+    local  模式: 使用 webdriver_manager 自动下载 ChromeDriver（macOS/Windows）
+                 Uses webdriver_manager to auto-download ChromeDriver (macOS/Windows)
+    server 模式: 使用系统已安装的 chromium + chromedriver（Linux/Docker）
+                 Uses system-installed chromium + chromedriver (Linux/Docker)
+    """
+    logger.debug(f"初始化 Chrome WebDriver [{RUN_MODE} 模式] / Initialising Chrome WebDriver [{RUN_MODE} mode]")
     options = webdriver.ChromeOptions()
 
+    # ── 无头参数 / Headless flags ─────────────────────────────────────────
     if not SHOW_GUI:
-        options.add_argument("headless")
-        options.add_argument("window-size=1920x1080")
-        options.add_argument("disable-gpu")
+        options.add_argument("--headless=new")   # 新版 headless，更稳定 / more stable
+        options.add_argument("--window-size=1920,1080")
+        options.add_argument("--disable-gpu")
+
+    # ── server 模式专用参数 / Server-only flags ───────────────────────────
+    if RUN_MODE == "server":
+        # 指向系统 Chromium 可执行文件 / Point to system Chromium binary
+        # Debian/Ubuntu: /usr/bin/chromium 或 /usr/bin/chromium-browser
+        chromium_paths = [
+            "/usr/bin/chromium",
+            "/usr/bin/chromium-browser",
+            "/usr/bin/google-chrome",
+            "/usr/bin/google-chrome-stable",
+        ]
+        for path in chromium_paths:
+            if os.path.exists(path):
+                options.binary_location = path
+                logger.debug(f"使用 Chromium: {path}")
+                break
+
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-setuid-sandbox")
+        options.add_argument("--single-process")
         options.add_argument(
-            'user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
-            'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36'
+            "--user-agent=Mozilla/5.0 (X11; Linux x86_64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36"
         )
+        options.add_argument(f"--user-data-dir=/tmp/chrome-{datetime.now().strftime('%Y%m%d-%H%M%S')}")
 
-    options.add_experimental_option("detach", DETACH)
-    options.add_argument('--incognito')
-    options.add_argument('--no-sandbox')
-    options.add_argument('--disable-dev-shm-usage')
-    options.add_argument(f'--user-data-dir=/tmp/chrome-{datetime.now().strftime("%Y%m%d-%H%M%S")}')
+        # 使用系统 chromedriver，不走 webdriver_manager
+        # Use system chromedriver; skip webdriver_manager
+        from selenium.webdriver.chrome.service import Service as ChromeService
+        chromedriver_paths = [
+            "/usr/bin/chromedriver",
+            "/usr/local/bin/chromedriver",
+        ]
+        service = None
+        for path in chromedriver_paths:
+            if os.path.exists(path):
+                service = ChromeService(executable_path=path)
+                logger.debug(f"使用 chromedriver: {path}")
+                break
+        if service is None:
+            raise RuntimeError(
+                "server 模式下未找到系统 chromedriver。"
+                "请先执行: apt-get install -y chromium chromium-driver"
+            )
+        driver = webdriver.Chrome(service=service, options=options)
 
-    driver = webdriver.Chrome(options=options)
+    else:
+        # ── local 模式: webdriver_manager 自动下载 / Auto-download ChromeDriver ──
+        from webdriver_manager.chrome import ChromeDriverManager
+        from selenium.webdriver.chrome.service import Service as ChromeService
+
+        options.add_experimental_option("detach", DETACH)
+        options.add_argument("--incognito")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument(
+            "--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36"
+        )
+        options.add_argument(f"--user-data-dir=/tmp/chrome-{datetime.now().strftime('%Y%m%d-%H%M%S')}")
+
+        service = ChromeService(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=options)
+
     logger.debug("Chrome WebDriver 启动成功 / Chrome WebDriver started")
     return driver
 
