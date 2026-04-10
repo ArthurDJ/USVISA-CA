@@ -32,6 +32,7 @@ from legacy.gmail import GMail, Message
 from legacy_rescheduler import legacy_reschedule
 from request_tracker import RequestTracker
 from settings import *
+from hub_notifier import notify as hub_notify
 
 # ---------------------------------------------------------------------------
 # 日志配置 / Logging setup
@@ -436,6 +437,16 @@ def reschedule(driver: WebDriver, old_appointment: dict, retryCount: int = 0) ->
         # ── 启动成功通知 (含实时预约信息 + 首次查询结果) ──────────
         global startup_notified
         if 'startup_notified' not in globals() or not startup_notified:
+            hub_notify(
+                status="running",
+                summary=f"脚本启动成功 — {USER_CONSULATE}",
+                metadata={
+                    "consulate": USER_CONSULATE,
+                    "earliest_available": str(earliest_available_date),
+                    "current_appointment": str(old_appointment.get("date", "N/A")),
+                    "acceptable_range": f"{EARLIEST_ACCEPTABLE_DATE} ~ {LATEST_ACCEPTABLE_DATE}",
+                },
+            )
             logger.info(f"发送启动成功汇报 / Sending startup success report: {earliest_available_date}")
             subject_prefix = "[STARTUP SUCCESS]" if not TEST_MODE else "[TEST STARTUP]"
             _send_email(
@@ -489,7 +500,16 @@ def reschedule(driver: WebDriver, old_appointment: dict, retryCount: int = 0) ->
                         ),
                         mandatory=True
                     )
-            
+                    hub_notify(
+                        status="heartbeat",
+                        summary=f"心跳 — 无名额 @ {USER_CONSULATE}",
+                        metadata={
+                            "consulate": USER_CONSULATE,
+                            "earliest_available": str(earliest_available_date),
+                            "current_appointment": str(old_appointment.get("date", "N/A")),
+                        },
+                    )
+
             sleep(DATE_REQUEST_DELAY + random.randint(0, 60))
             continue
 
@@ -519,6 +539,16 @@ def reschedule(driver: WebDriver, old_appointment: dict, retryCount: int = 0) ->
                     ),
                     mandatory=True
                 )
+                hub_notify(
+                    status="heartbeat",
+                    summary=f"心跳 — 名额在范围外 {earliest_available_date} @ {USER_CONSULATE}",
+                    metadata={
+                        "consulate": USER_CONSULATE,
+                        "earliest_available": str(earliest_available_date),
+                        "current_appointment": str(old_appointment.get("date", "N/A")),
+                        "total_slots": total_slots,
+                    },
+                )
 
         # ── 2. 检查是否在可接受范围内 / Check acceptable window ──────────────
         if not (earliest_acceptable_date <= earliest_available_date <= latest_acceptable_date):
@@ -546,6 +576,17 @@ def reschedule(driver: WebDriver, old_appointment: dict, retryCount: int = 0) ->
 
         # ── 4. 找到合适日期 / Suitable date found ────────────────────────────
         logger.info(f"[!!!] 找到可用日期 / FOUND SLOT: {earliest_available_date}")
+        hub_notify(
+            status="found",
+            summary=f"找到名额: {earliest_available_date} @ {USER_CONSULATE}",
+            metadata={
+                "available_date": str(earliest_available_date),
+                "consulate": USER_CONSULATE,
+                "current_appointment": str(old_appointment.get("date", "N/A")),
+                "total_slots": total_slots,
+                "auto_reschedule": ENABLE_AUTO_RESCHEDULE,
+            },
+        )
 
         # ── 5. 自动改期开关检查 / Auto-reschedule toggle check ────────────────
         if not ENABLE_AUTO_RESCHEDULE:
@@ -627,6 +668,18 @@ def reschedule(driver: WebDriver, old_appointment: dict, retryCount: int = 0) ->
                 mandatory=True,  # 改期成功强制发送，不受邮件开关控制 / Always send on success
             )
             logger.info("改期成功！/ Successfully rescheduled!")
+            hub_notify(
+                status="booked",
+                summary=f"改签成功: {verified['date']} @ {USER_CONSULATE}",
+                metadata={
+                    "booked_date": str(booked_info["date"]),
+                    "booked_time": booked_info["time"],
+                    "verified_date": str(verified["date"]),
+                    "verified_time": verified["time"],
+                    "old_appointment": str(old_appointment.get("date", "N/A")),
+                    "consulate": USER_CONSULATE,
+                },
+            )
             return True
 
         except Exception as e:
@@ -749,4 +802,9 @@ if __name__ == "__main__":
             f"改期程序已于 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} 正常退出。\n"
             f"The rescheduler program exited at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}."
         ),
+    )
+    hub_notify(
+        status="exited",
+        summary=f"程序正常退出，共 {session_count} 个 session",
+        metadata={"session_count": session_count},
     )
